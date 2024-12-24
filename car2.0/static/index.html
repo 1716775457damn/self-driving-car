@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>ESP32 MPU6050 数据可视化</title>
+    <meta charset="UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #2196F3;
+            --secondary-color: #1976D2;
+            --success-color: #4CAF50;
+            --error-color: #f44336;
+            --background-color: #f5f5f5;
+            --card-background: #ffffff;
+            --text-primary: #333333;
+            --text-secondary: #666666;
+            --border-radius: 12px;
+            --shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            --transition: all 0.3s ease;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Roboto', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .header {
+            width: 100%;
+            max-width: 1200px;
+            text-align: center;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: var(--card-background);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            font-weight: 500;
+            color: var(--primary-color);
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: var(--text-secondary);
+            font-size: 1.1em;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr 2fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .panel {
+            background: var(--card-background);
+            padding: 25px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+            transition: var(--transition);
+        }
+
+        .panel:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .data-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            transition: var(--transition);
+        }
+
+        .data-row:last-child {
+            border-bottom: none;
+        }
+
+        .data-row:hover {
+            background: rgba(33, 150, 243, 0.05);
+        }
+
+        .label {
+            color: var(--text-secondary);
+            font-size: 0.95em;
+            font-weight: 500;
+        }
+
+        .value {
+            font-family: 'Roboto Mono', monospace;
+            font-size: 1.1em;
+            font-weight: 600;
+            color: var(--primary-color);
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: rgba(33, 150, 243, 0.1);
+            min-width: 100px;
+            text-align: right;
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 500;
+            margin-bottom: 20px;
+            transition: var(--transition);
+        }
+
+        .status::before {
+            content: '';
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .connected {
+            background: rgba(76, 175, 80, 0.1);
+            color: var(--success-color);
+        }
+
+        .connected::before {
+            background: var(--success-color);
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+        }
+
+        .disconnected {
+            background: rgba(244, 67, 54, 0.1);
+            color: var(--error-color);
+        }
+
+        .disconnected::before {
+            background: var(--error-color);
+            box-shadow: 0 0 0 2px rgba(244, 67, 54, 0.2);
+        }
+
+        #visualization {
+            width: 100%;
+            height: 500px;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            background: #1a1a1a;
+        }
+
+        .controls {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .control-group {
+            background: var(--card-background);
+            padding: 20px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow);
+        }
+
+        .control-group h3 {
+            color: var(--text-primary);
+            margin-bottom: 15px;
+            font-size: 1.1em;
+            font-weight: 500;
+        }
+
+        .control-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .control-item label {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            min-width: 120px;
+        }
+
+        .control-item input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid rgba(0, 0, 0, 0.1);
+            border-radius: 4px;
+            font-size: 0.9em;
+            transition: var(--transition);
+        }
+
+        .control-item input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            background: var(--primary-color);
+            color: white;
+            font-weight: 500;
+            cursor: pointer;
+            transition: var(--transition);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            font-size: 0.9em;
+        }
+
+        button:hover {
+            background: var(--secondary-color);
+            transform: translateY(-2px);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+
+            .controls {
+                grid-template-columns: 1fr;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+        }
+
+        /* 添加动画效果 */
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+
+            50% {
+                transform: scale(1.05);
+            }
+
+            100% {
+                transform: scale(1);
+            }
+        }
+
+        .connected {
+            animation: pulse 2s infinite;
+        }
+
+        .value.changed {
+            animation: highlight 0.5s ease-out;
+        }
+
+        @keyframes highlight {
+            0% {
+                background-color: rgba(33, 150, 243, 0.3);
+            }
+
+            100% {
+                background-color: rgba(33, 150, 243, 0.1);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="header">
+        <h1>MPU6050 数据可视化</h1>
+        <p>实时监测和显示MPU6050传感器数据</p>
+    </div>
+
+    <div class="container">
+        <div class="panel">
+            <div style="text-align: center;">
+                <div id="connection-status" class="status disconnected">未连接</div>
+            </div>
+            <div class="data-row">
+                <span class="label">X轴加速度</span>
+                <span id="mpu-x" class="value">0.00 g</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Y轴加速度</span>
+                <span id="mpu-y" class="value">0.00 g</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Z轴加速度</span>
+                <span id="mpu-z" class="value">0.00 g</span>
+            </div>
+            <div class="data-row">
+                <span class="label">X轴速度</span>
+                <span id="vel-x" class="value">0.00 m/s</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Y轴速度</span>
+                <span id="vel-y" class="value">0.00 m/s</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Z轴速度</span>
+                <span id="vel-z" class="value">0.00 m/s</span>
+            </div>
+            <div class="data-row">
+                <span class="label">X轴位置</span>
+                <span id="pos-x" class="value">0.00 m</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Y轴位置</span>
+                <span id="pos-y" class="value">0.00 m</span>
+            </div>
+            <div class="data-row">
+                <span class="label">Z轴位置</span>
+                <span id="pos-z" class="value">0.00 m</span>
+            </div>
+        </div>
+        <div class="panel">
+            <div id="visualization"></div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <h3>显示设置</h3>
+            <div class="control-item">
+                <label>显示范围</label>
+                <input type="number" id="view-range" value="20" min="1" max="100" step="1">
+            </div>
+            <div class="control-item">
+                <label>网格大小</label>
+                <input type="number" id="grid-size" value="20" min="5" max="50" step="5">
+            </div>
+            <div class="button-group">
+                <button onclick="updateViewRange()">更新范围</button>
+                <button onclick="updateGridSize()">更新网格</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>轨迹设置</h3>
+            <div class="control-item">
+                <label>轨迹点数</label>
+                <input type="number" id="path-points" value="500" min="100" max="2000" step="100">
+            </div>
+            <div class="button-group">
+                <button onclick="updatePathPoints()">更新轨迹</button>
+                <button onclick="clearPath()">清除轨迹</button>
+            </div>
+        </div>
+
+        <div class="control-group">
+            <h3>视图控制</h3>
+            <div class="button-group">
+                <button onclick="resetView()">重置视图</button>
+                <button onclick="resetPosition()">重置位置</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let scene, camera, renderer, cube, pathGeometry, pathLine;
+        let controls;
+        const pathPoints = [];
+        let gridHelper, axesHelper;
+        let viewRange = 20;
+        let gridSize = 20;
+        let maxPathPoints = 500;
+
+        function initVisualization() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            camera = new THREE.PerspectiveCamera(75, document.getElementById('visualization').clientWidth / 400, 0.1, 1000);
+            camera.position.set(15, 15, 15);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(document.getElementById('visualization').clientWidth, 400);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.getElementById('visualization').appendChild(renderer.domElement);
+
+            // 添加轨道控制器
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            updateGrid();
+
+            // 创建立方体
+            const geometry = new THREE.BoxGeometry(2, 0.5, 1);
+            const material = new THREE.MeshPhongMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: 0.8,
+                shininess: 60
+            });
+            cube = new THREE.Mesh(geometry, material);
+            scene.add(cube);
+
+            // 创建轨迹线
+            pathGeometry = new THREE.BufferGeometry();
+            const pathMaterial = new THREE.LineBasicMaterial({
+                color: 0xff0000,
+                linewidth: 2
+            });
+            pathLine = new THREE.Line(pathGeometry, pathMaterial);
+            scene.add(pathLine);
+
+            // 添加光源
+            const ambientLight = new THREE.AmbientLight(0x404040);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+
+            animate();
+        }
+
+        function updateGrid() {
+            // 移除旧的网格和坐标轴
+            if (gridHelper) scene.remove(gridHelper);
+            if (axesHelper) scene.remove(axesHelper);
+
+            // 添加新的网格和坐标轴
+            gridHelper = new THREE.GridHelper(viewRange * 2, gridSize, 0x404040, 0x404040);
+            scene.add(gridHelper);
+
+            axesHelper = new THREE.AxesHelper(viewRange);
+            scene.add(axesHelper);
+
+            // 更新相机位置
+            camera.position.set(viewRange * 0.75, viewRange * 0.75, viewRange * 0.75);
+            camera.lookAt(0, 0, 0);
+        }
+
+        function updateViewRange() {
+            viewRange = parseFloat(document.getElementById('view-range').value);
+            updateGrid();
+        }
+
+        function updateGridSize() {
+            gridSize = parseInt(document.getElementById('grid-size').value);
+            updateGrid();
+        }
+
+        function updatePathPoints() {
+            maxPathPoints = parseInt(document.getElementById('path-points').value);
+            while (pathPoints.length > maxPathPoints) {
+                pathPoints.shift();
+            }
+        }
+
+        function clearPath() {
+            pathPoints.length = 0;
+            pathGeometry.setFromPoints(pathPoints);
+        }
+
+        function resetPosition() {
+            if (cube) {
+                cube.position.set(0, 0, 0);
+                cube.rotation.set(0, 0, 0);
+            }
+            clearPath();
+        }
+
+        function resetView() {
+            camera.position.set(viewRange * 0.75, viewRange * 0.75, viewRange * 0.75);
+            camera.lookAt(0, 0, 0);
+            controls.reset();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function updateVisualization(data) {
+            if (!cube) return;
+
+            const scale = 2;
+            cube.position.set(
+                data.position.x * scale,
+                data.position.y * scale,
+                data.position.z * scale
+            );
+
+            // 计算欧拉角
+            const quaternion = new THREE.Quaternion();
+            quaternion.setFromEuler(new THREE.Euler(
+                math.radians(data.orientation.x),
+                math.radians(data.orientation.y),
+                math.radians(data.orientation.z),
+                'XYZ'
+            ));
+            cube.setRotationFromQuaternion(quaternion);
+
+            // 更新轨迹
+            pathPoints.push(new THREE.Vector3(
+                data.position.x * scale,
+                data.position.y * scale,
+                data.position.z * scale
+            ));
+
+            while (pathPoints.length > maxPathPoints) {
+                pathPoints.shift();
+            }
+
+            pathGeometry.setFromPoints(pathPoints);
+        }
+
+        // 数据更新
+        async function updateMPUData() {
+            try {
+                const response = await fetch('/gyro', {
+                    method: 'GET',
+                    cache: 'no-cache',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                if (data.error) {
+                    console.error('Server error:', data.error);
+                    return;
+                }
+
+                // 更新加速度显示
+                document.getElementById('mpu-x').textContent = `${parseFloat(data.acceleration.x).toFixed(3)} g`;
+                document.getElementById('mpu-y').textContent = `${parseFloat(data.acceleration.y).toFixed(3)} g`;
+                document.getElementById('mpu-z').textContent = `${parseFloat(data.acceleration.z).toFixed(3)} g`;
+
+                // 更新速度显示
+                document.getElementById('vel-x').textContent = `${parseFloat(data.velocity.x).toFixed(3)} m/s`;
+                document.getElementById('vel-y').textContent = `${parseFloat(data.velocity.y).toFixed(3)} m/s`;
+                document.getElementById('vel-z').textContent = `${parseFloat(data.velocity.z).toFixed(3)} m/s`;
+
+                // 更新位置显示
+                document.getElementById('pos-x').textContent = `${parseFloat(data.position.x).toFixed(3)} m`;
+                document.getElementById('pos-y').textContent = `${parseFloat(data.position.y).toFixed(3)} m`;
+                document.getElementById('pos-z').textContent = `${parseFloat(data.position.z).toFixed(3)} m`;
+
+                // 更新3D可视化
+                updateVisualization(data);
+
+                // 更新连接状态
+                document.getElementById('connection-status').textContent = '已连接';
+                document.getElementById('connection-status').className = 'status connected';
+
+            } catch (error) {
+                console.error('Error fetching MPU data:', error);
+                document.getElementById('connection-status').textContent = '未连接';
+                document.getElementById('connection-status').className = 'status disconnected';
+            }
+        }
+
+        // 页面加载完成后初始化
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Starting visualization...');
+            initVisualization();
+
+            // 立即更新一次数据
+            updateMPUData();
+            // 设置定时更新（每100ms更新一次）
+            const updateInterval = setInterval(updateMPUData, 100);
+
+            // 页面关闭时清除定时器
+            window.addEventListener('beforeunload', () => {
+                if (updateInterval) {
+                    clearInterval(updateInterval);
+                }
+            });
+        });
+
+        // 窗口大小改变时调整渲染器大小
+        window.addEventListener('resize', () => {
+            if (renderer && camera) {
+                const width = document.getElementById('visualization').clientWidth;
+                const height = 400;
+
+                camera.aspect = width / height;
+                camera.updateProjectionMatrix();
+
+                renderer.setSize(width, height);
+                renderer.setPixelRatio(window.devicePixelRatio);
+            }
+        });
+    </script>
+</body>
+
+</html>
