@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>ESP32 MPU6050 数据可视化</title>
+    <meta charset="UTF-8">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 300px 1fr;
+            gap: 10px;
+            padding: 10px;
+            max-width: 100%;
+            height: 100vh;
+            margin: 0;  
+        }
+
+        .sidebar {
+            background: #2d2d2d;
+            padding: 10px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow-y: auto;
+            max-height: calc(100vh - 20px);
+        }
+
+        .main-content {
+            display: grid;
+            grid-template-rows: 60% 40%;
+            gap: 10px;
+            height: calc(100vh - 20px);
+        }
+
+        .visualization-container {
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 10px;
+        }
+
+        .chart {
+            background: #3d3d3d;
+            border-radius: 6px;
+            height: 100%;
+        }
+
+        #visualization {
+            width: 100%;
+            height: 100%;
+            background: #000;
+            border-radius: 8px;
+        }
+
+        .data-item {
+            background: #3d3d3d;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 0.9em;
+        }
+
+        .value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #4CAF50;
+            font-family: monospace;
+            margin: 2px 0;
+        }
+
+        .label {
+            color: #aaa;
+            font-size: 12px;
+            margin-bottom: 2px;
+        }
+
+        .status {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 15px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+            text-align: center;
+        }
+
+        .connected {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .disconnected {
+            background: #f44336;
+            color: white;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div style="text-align: center;">
+                <div id="connection-status" class="status disconnected">未连接</div>
+            </div>
+            <div class="data-item">
+                <div class="label">线性加速度</div>
+                <div id="linear-accel-x" class="value">0.00 m/s²</div>
+                <div id="linear-accel-y" class="value">0.00 m/s²</div>
+                <div id="linear-accel-z" class="value">0.00 m/s²</div>
+            </div>
+            <div class="data-item">
+                <div class="label">角速度</div>
+                <div id="gyro-x" class="value">0.00 °/s</div>
+                <div id="gyro-y" class="value">0.00 °/s</div>
+                <div id="gyro-z" class="value">0.00 °/s</div>
+            </div>
+            <div class="data-item">
+                <div class="label">姿态角</div>
+                <div id="orientation-x" class="value">0.00°</div>
+                <div id="orientation-y" class="value">0.00°</div>
+                <div id="orientation-z" class="value">0.00°</div>
+            </div>
+            <div class="data-item">
+                <div class="label">速度</div>
+                <div id="velocity-x" class="value">0.00 m/s</div>
+                <div id="velocity-y" class="value">0.00 m/s</div>
+                <div id="velocity-z" class="value">0.00 m/s</div>
+            </div>
+        </div>
+        <div class="main-content">
+            <div class="visualization-container">
+                <div id="visualization"></div>
+            </div>
+            <div class="charts-container">
+                <div class="chart" id="accel-chart"></div>
+                <div class="chart" id="gyro-chart"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 添加全局变量
+        let scene, camera, renderer, cube, controls;
+        let pathGeometry, pathLine, pathMaterial;
+        const pathPoints = [];
+        const MAX_PATH_POINTS = 1000;
+
+        // 添加平滑参数
+        const ROTATION_SMOOTHING = 0.2;
+        const POSITION_SMOOTHING = 0.2;
+        const POSITION_SCALE = 20;
+        const MIN_MOVEMENT = 0.001;
+
+        // 添加轨迹相关配置
+        const pathConfig = {
+            maxPoints: 500,        // 减少最大点数以提高性能
+            smoothing: 20,         // 减少平滑点数以提高性能
+            minDistance: 0.05,     // 增加最小距离阈值，减少点数
+            color: 0x00ff00,      // 轨迹颜色
+            width: 2,             // 轨迹线宽
+            opacity: 0.8,         // 轨迹透明度
+            fadeOut: true,        // 启用轨迹渐隐
+            fadeSpeed: 0.995      // 渐隐速度
+        };
+
+        // 数据缓冲
+        const dataBuffer = {
+            time: [],
+            accel: { x: [], y: [], z: [] },
+            gyro: { x: [], y: [], z: [] },
+            position: { x: [], y: [], z: [] }
+        };
+        const BUFFER_SIZE = 100;
+
+        // 添加服务器配置
+        const serverConfig = {
+            host: window.location.hostname,  // 动态获取当前主机名
+            port: 5000,
+            maxRetries: 3,           // 最大重试次数
+            retryDelay: 2000         // 重试延迟（毫秒）
+        };
+
+        let retryCount = 0;
+
+        function initVisualization() {
+            // 初始化场景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1a1a1a);
+
+            // 初始化相机
+            camera = new THREE.PerspectiveCamera(
+                75,
+                document.getElementById('visualization').clientWidth / 400,
+                0.1,
+                1000
+            );
+            camera.position.set(30, 30, 30);
+            camera.lookAt(0, 0, 0);
+
+            // 初始化渲染器
+            renderer = new THREE.WebGLRenderer({
+                antialias: true,
+                alpha: true
+            });
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setSize(
+                document.getElementById('visualization').clientWidth,
+                400
+            );
+            document.getElementById('visualization').appendChild(renderer.domElement);
+
+            // 初始化控制器
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.rotateSpeed = 0.8;
+            controls.zoomSpeed = 1.2;
+
+            // 添加网格和坐标轴
+            const gridHelper = new THREE.GridHelper(20, 20, 0x404040, 0x404040);
+            scene.add(gridHelper);
+
+            const axesHelper = new THREE.AxesHelper(10);
+            scene.add(axesHelper);
+
+            // 创建设备模型
+            const geometry = new THREE.BoxGeometry(2, 0.5, 1);
+            const materials = [
+                new THREE.MeshPhongMaterial({ color: 0xff4444, shininess: 100 }), // 右
+                new THREE.MeshPhongMaterial({ color: 0xff4444, shininess: 100 }), // 左
+                new THREE.MeshPhongMaterial({ color: 0x44ff44, shininess: 100 }), // 上
+                new THREE.MeshPhongMaterial({ color: 0x44ff44, shininess: 100 }), // 下
+                new THREE.MeshPhongMaterial({ color: 0x4444ff, shininess: 100 }), // 前
+                new THREE.MeshPhongMaterial({ color: 0x4444ff, shininess: 100 })  // 后
+            ];
+            cube = new THREE.Mesh(geometry, materials);
+            scene.add(cube);
+
+            // 初始化轨迹线
+            pathGeometry = new THREE.BufferGeometry();
+            pathMaterial = new THREE.LineBasicMaterial({
+                color: pathConfig.color,
+                linewidth: pathConfig.width,
+                transparent: true,
+                opacity: pathConfig.opacity,
+                depthTest: false
+            });
+            pathLine = new THREE.Line(pathGeometry, pathMaterial);
+            pathLine.frustumCulled = false;
+            scene.add(pathLine);
+
+            // 添加光照
+            const ambientLight = new THREE.AmbientLight(0x404040, 1);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(5, 5, 5);
+            scene.add(directionalLight);
+
+            // 开始动画循环
+            animate();
+        }
+
+        // 初始化图表
+        function initCharts() {
+            const accelLayout = {
+                title: '线性加速度',
+                paper_bgcolor: '#3d3d3d',
+                plot_bgcolor: '#3d3d3d',
+                font: { color: '#ffffff' },
+                xaxis: { title: '时间 (s)', gridcolor: '#666666' },
+                yaxis: { title: '加速度 (m/s²)', gridcolor: '#666666' },
+                showlegend: true,
+                legend: { font: { color: '#ffffff' } }
+            };
+
+            const gyroLayout = {
+                title: '角速度',
+                paper_bgcolor: '#3d3d3d',
+                plot_bgcolor: '#3d3d3d',
+                font: { color: '#ffffff' },
+                xaxis: { title: '时间 (s)', gridcolor: '#666666' },
+                yaxis: { title: '角速度 (°/s)', gridcolor: '#666666' },
+                showlegend: true,
+                legend: { font: { color: '#ffffff' } }
+            };
+
+            Plotly.newPlot('accel-chart', [{
+                name: 'X轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#ff0000' }
+            }, {
+                name: 'Y轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#00ff00' }
+            }, {
+                name: 'Z轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#0000ff' }
+            }], accelLayout);
+
+            Plotly.newPlot('gyro-chart', [{
+                name: 'X轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#ff0000' }
+            }, {
+                name: 'Y轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#00ff00' }
+            }, {
+                name: 'Z轴',
+                x: [],
+                y: [],
+                type: 'scatter',
+                mode: 'lines',
+                line: { color: '#0000ff' }
+            }], gyroLayout);
+        }
+
+        function updateCharts(data) {
+            const time = Date.now() / 1000;
+
+            // 更新数据缓冲
+            dataBuffer.time.push(time);
+            dataBuffer.accel.x.push(data.linear_acceleration.x);
+            dataBuffer.accel.y.push(data.linear_acceleration.y);
+            dataBuffer.accel.z.push(data.linear_acceleration.z);
+            dataBuffer.gyro.x.push(data.gyro.x);
+            dataBuffer.gyro.y.push(data.gyro.y);
+            dataBuffer.gyro.z.push(data.gyro.z);
+
+            // 限制缓冲区大小
+            if (dataBuffer.time.length > BUFFER_SIZE) {
+                dataBuffer.time.shift();
+                dataBuffer.accel.x.shift();
+                dataBuffer.accel.y.shift();
+                dataBuffer.accel.z.shift();
+                dataBuffer.gyro.x.shift();
+                dataBuffer.gyro.y.shift();
+                dataBuffer.gyro.z.shift();
+            }
+
+            // 更新图表
+            Plotly.update('accel-chart', {
+                x: [dataBuffer.time, dataBuffer.time, dataBuffer.time],
+                y: [dataBuffer.accel.x, dataBuffer.accel.y, dataBuffer.accel.z]
+            });
+
+            Plotly.update('gyro-chart', {
+                x: [dataBuffer.time, dataBuffer.time, dataBuffer.time],
+                y: [dataBuffer.gyro.x, dataBuffer.gyro.y, dataBuffer.gyro.z]
+            });
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) controls.update();
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+
+        function updateVisualization(data) {
+            if (!cube || !scene || !camera || !renderer) {
+                console.error('3D objects not initialized');
+                return;
+            }
+
+            try {
+                // 更新姿态
+                const euler = new THREE.Euler(
+                    THREE.MathUtils.degToRad(data.orientation.x),
+                    THREE.MathUtils.degToRad(data.orientation.y),
+                    THREE.MathUtils.degToRad(data.orientation.z),
+                    'XYZ'
+                );
+                const quaternion = new THREE.Quaternion().setFromEuler(euler);
+                cube.quaternion.slerp(quaternion, ROTATION_SMOOTHING);
+
+                // 更新位置
+                const targetPosition = new THREE.Vector3(
+                    data.position.x * POSITION_SCALE,
+                    data.position.y * POSITION_SCALE,
+                    data.position.z * POSITION_SCALE
+                );
+
+                // 平滑更新位置
+                cube.position.lerp(targetPosition, POSITION_SMOOTHING);
+
+                // 更新轨迹
+                if (pathPoints.length === 0 ||
+                    cube.position.distanceTo(pathPoints[pathPoints.length - 1]) > pathConfig.minDistance) {
+
+                    // 添加新的轨迹点
+                    pathPoints.push(cube.position.clone());
+
+                    // 限制轨迹点数量
+                    if (pathPoints.length > pathConfig.maxPoints) {
+                        pathPoints.shift();
+                    }
+
+                    // 如果启用渐隐效果
+                    if (pathConfig.fadeOut && pathLine.material.opacity > 0.1) {
+                        pathLine.material.opacity *= pathConfig.fadeSpeed;
+                    }
+
+                    // 更新轨迹几何体
+                    if (pathPoints.length > 1) {
+                        // 使用CatmullRomCurve3创建平滑曲线
+                        const curve = new THREE.CatmullRomCurve3(pathPoints);
+                        const points = curve.getPoints(pathConfig.smoothing);
+                        pathGeometry.setFromPoints(points);
+
+                        // 更新轨迹线材质
+                        pathLine.material.needsUpdate = true;
+                    }
+                }
+
+                // 强制渲染更新
+                renderer.render(scene, camera);
+            } catch (error) {
+                console.error('Error updating visualization:', error);
+            }
+        }
+
+        // 添加轨迹重置功能
+        function resetTrajectory() {
+            pathPoints.length = 0;
+            pathGeometry.setFromPoints([]);
+            cube.position.set(0, 0, 0);
+            cube.quaternion.set(0, 0, 0, 1);
+            pathLine.material.opacity = pathConfig.opacity;
+        }
+
+        // 添加键盘控制
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'r' || event.key === 'R') {
+                resetTrajectory();
+            }
+        });
+
+        async function updateMPUData() {
+            try {
+                const apiUrl = `http://${serverConfig.host}:${serverConfig.port}/gyro`;
+                console.log(`[${new Date().toISOString()}] 尝试连接: ${apiUrl}`);
+
+                const response = await fetch(apiUrl, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    mode: 'cors',
+                    cache: 'no-cache',  // 禁用缓存
+                    credentials: 'same-origin'  // 添加凭证
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log(`[${new Date().toISOString()}] 收到数据:`, data);
+
+                // 检查服务器状态
+                if (data.server_info) {
+                    console.log('服务器状态:', data.server_info);
+                }
+
+                // 更新连接状态显示
+                const connectionStatus = document.getElementById('connection-status');
+                if (data.connection_status) {
+                    connectionStatus.textContent = 'ESP32已连接';
+                    connectionStatus.className = 'status connected';
+                    retryCount = 0;  // 重置重试计数
+                } else {
+                    connectionStatus.textContent = 'ESP32未连接';
+                    connectionStatus.className = 'status disconnected';
+                    console.log(`[${new Date().toISOString()}] ESP32未连接`);
+                }
+
+                // 检查数据完整性并设置默认值
+                const processedData = {
+                    acceleration: data.acceleration || { x: 0, y: 0, z: 0 },
+                    linear_acceleration: data.linear_acceleration || { x: 0, y: 0, z: 0 },
+                    gyro: data.gyro || { x: 0, y: 0, z: 0 },
+                    orientation: data.orientation || { x: 0, y: 0, z: 0 },
+                    velocity: data.velocity || { x: 0, y: 0, z: 0 },
+                    position: data.position || { x: 0, y: 0, z: 0 }
+                };
+
+                // 更新显示
+                updateDisplayValues(processedData);
+                updateVisualization(processedData);
+                updateCharts(processedData);
+
+            } catch (error) {
+                console.error('Error fetching MPU data:', error);
+                const connectionStatus = document.getElementById('connection-status');
+                connectionStatus.textContent = '连接服务器失败';
+                connectionStatus.className = 'status disconnected';
+            }
+        }
+
+        // 修改更新频率和错误处理
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Starting visualization...');
+            initVisualization();
+            initCharts();
+
+            let consecutiveErrors = 0;
+            const maxConsecutiveErrors = 5;
+
+            // 使用更可靠的轮询机制
+            const updateInterval = setInterval(async () => {
+                try {
+                    await updateMPUData();
+                    consecutiveErrors = 0; // 重置错误计数
+                } catch (error) {
+                    console.error('Update error:', error);
+                    consecutiveErrors++;
+
+                    if (consecutiveErrors >= maxConsecutiveErrors) {
+                        console.log('Too many consecutive errors, increasing retry interval');
+                        clearInterval(updateInterval);
+                        setTimeout(() => {
+                            location.reload();
+                        }, 5000);
+                    }
+                }
+            }, 100);
+        });
+
+        // 处理窗口大小改变
+        let resizeTimeout;
+        window.addEventListener('resize', () => {
+            if (resizeTimeout) {
+                clearTimeout(resizeTimeout);
+            }
+            resizeTimeout = setTimeout(() => {
+                if (renderer && camera) {
+                    const width = document.getElementById('visualization').clientWidth;
+                    const height = 400;
+
+                    camera.aspect = width / height;
+                    camera.updateProjectionMatrix();
+
+                    renderer.setSize(width, height);
+                }
+            }, 100);
+        });
+
+        // 添加updateDisplayValues函数
+        function updateDisplayValues(data) {
+            try {
+                // 更新线性加速度显示
+                document.getElementById('linear-accel-x').textContent = `${data.linear_acceleration.x.toFixed(3)} m/s²`;
+                document.getElementById('linear-accel-y').textContent = `${data.linear_acceleration.y.toFixed(3)} m/s²`;
+                document.getElementById('linear-accel-z').textContent = `${data.linear_acceleration.z.toFixed(3)} m/s²`;
+
+                // 更新角速度显示
+                document.getElementById('gyro-x').textContent = `${data.gyro.x.toFixed(2)} °/s`;
+                document.getElementById('gyro-y').textContent = `${data.gyro.y.toFixed(2)} °/s`;
+                document.getElementById('gyro-z').textContent = `${data.gyro.z.toFixed(2)} °/s`;
+
+                // 更新姿态角显示
+                document.getElementById('orientation-x').textContent = `${data.orientation.x.toFixed(2)}°`;
+                document.getElementById('orientation-y').textContent = `${data.orientation.y.toFixed(2)}°`;
+                document.getElementById('orientation-z').textContent = `${data.orientation.z.toFixed(2)}°`;
+
+                // 更新速度显示
+                document.getElementById('velocity-x').textContent = `${data.velocity.x.toFixed(3)} m/s`;
+                document.getElementById('velocity-y').textContent = `${data.velocity.y.toFixed(3)} m/s`;
+                document.getElementById('velocity-z').textContent = `${data.velocity.z.toFixed(3)} m/s`;
+            } catch (error) {
+                console.error('Error updating display values:', error);
+            }
+        }
+    </script>
+</body>
+
+</html>
